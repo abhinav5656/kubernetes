@@ -1,0 +1,219 @@
+---
+- name: Install docker
+  hosts: all
+  gather_facts: false
+  tasks:
+  - name: Check docker existence
+    shell: docker --version
+    register: docker
+    ignore_errors: yes
+  - debug:
+      var: docker
+  - name: docker block
+    block:
+      - name: Install required pacakges for docker
+        apt:
+          name: "{{item}}"
+          state: present
+        with_items:
+          - apt-transport-https
+          - ca-certificates
+          - curl
+          - gnupg-agent
+          - software-properties-common
+        register: packages
+      - debug:
+          var: packages
+
+      - name: Adding Docker key
+        apt_key:
+          url: https://download.docker.com/linux/debian/gpg
+          state: present
+        register: docker_key
+      - debug:
+          var: docker_key
+
+      - name:
+        shell: lsb_release -cs
+        register: lsb
+      - debug: var=lsb.stdout
+
+      - name: Adding docker repo
+        apt_repository:
+          repo: deb https://download.docker.com/linux/ubuntu bionic stable
+          state: present
+        register: repo
+        ignore_errors: yes
+      - debug: var=repo
+
+      - name: update repo
+        apt:
+          update_cache: yes
+        register: update
+        ignore_errors: yes
+      - debug:
+          var: update
+
+      - shell: apt-cache policy docker-ce
+        ignore_errors: yes
+        register: cache
+      - debug: var=cache
+
+      - name: Install docker
+        shell: apt-get install -y docker-ce
+        register: install_docker
+
+      - debug: var=install_docker
+
+
+      - name: start docker service
+        service:
+          name: docker
+          state: started
+        register: service
+        ignore_errors: yes
+      - debug: var=service
+
+      - shell: docker ps
+        register: ps
+      - debug: var=ps
+
+    when: docker is failed
+
+
+  - name: Disable swap
+    shell: swapoff -a
+    register: swapoff
+  - debug: var=swapoff
+
+  - name: disable swap in fstab file
+    replace:
+      path: /etc/fstab
+      regexp: '^([^#].*?\sswap\s+sw\s+.*)$'
+      replace: '# \1'
+    register: fstab
+  - debug:
+      var: fstab
+
+  - name: add k8s key
+    apt_key:
+      url: https://packages.cloud.google.com/apt/doc/apt-key.gpg
+      state: present
+    register: k8s_key
+  - debug: var=k8s_key
+
+
+  - name: add k8s repository into source list
+    apt_repository:
+      repo: deb https://apt.kubernetes.io/ kubernetes-xenial main
+      state: present
+      filename: kubernetes.list
+      update_cache: yes
+    register: k8s_repo
+  - debug: var=k8s_repo
+
+
+  - name: Install kubelet
+    apt:
+      name: kubelet
+      state: present
+      update_cache: yes
+    register: kubelet
+  - debug: var=kubelet
+
+  - name: Install kubeadm
+    apt:
+      name: kubeadm
+      state: present
+    register: kubeadm
+  - debug: var=kubeadm
+
+  - name: starting kubelet
+    service:
+      name: kubelet
+      enabled: yes
+      state: started
+    register: kubelet
+  - debug: var=kubelet
+
+  - shell: apt-mark hold kubelet kubeadm kubectl
+
+- name: Configure master node
+  hosts: master
+  vars_files:
+    - env_var
+  tasks:
+    - name: instll kubectl on master node
+      apt:
+        name: kubectl
+        state: present
+      register: kubectl
+    - debug: var=kubectl
+
+    - name: initialize k8s
+      shell: kubeadm init  #>> k8s_cluster.txt
+      #      args:
+      #  chdir: $HOME
+      #  creates: k8s_cluster.txt
+      register: cluster_file
+    - debug: var=cluster_file
+
+    - name: create directory named .kube
+      file:
+        path: $HOME/.kube
+        state: directory
+        mode: 0755
+        #  become_user:
+      register: kube
+    - debug: var=kube
+
+    - name: copy k8s admin.conf to abhinav kube config
+      copy:
+        src: /etc/kubernetes/admin.conf
+        dest: $HOME/.kube/config
+        remote_src: yes
+      register: admin_conf
+    - debug: var=admin_conf
+
+    - name: node
+      shell: kubectl taint nodes node-role.kubernetes.io/master- --all
+      register: node
+      ignore_errors: yes
+    - debug: var=node
+
+    - name: install network
+      shell: kubectl apply -f https://docs.projectcalico.org/archive/v3.13/manifests/calico.yaml
+      register: network
+    - debug: var=network
+
+
+    - name: create token
+      shell: kubeadm token create --print-join-command
+      register: token
+    - debug: var=token
+
+    - name: token
+      set_fact:
+        worker_token: "{{ token.stdout_lines[0] }}"
+    - debug: var=worker_token
+
+    - name: store token
+      local_action: copy content={{ worker_token }} dest={{ token_file }}
+      #  sudo: False
+
+- name: configuring worker nodes
+  hosts: worker
+  vars_files:
+    - env_var
+  tasks:
+    - name: Copying token to worker nodes
+      copy: src={{ token_file }} dest=join_token
+
+    - name: join master
+      shell: |
+       cat join_token | tail -2 > out.sh
+       sh out.sh
+      register: worker
+    - debug: var=worker
+
+

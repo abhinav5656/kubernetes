@@ -1,0 +1,41 @@
+---
+
+- name: install kubernetes dashboard
+  hosts: master
+  gather_facts: false
+  tasks:
+          #  - name: install dashboard
+          #    shell: "kubectl apply -f https://raw.githubusercontent.com/kubernetes/dashboard/v2.0.0/aio/deploy/recommended.yaml"
+          #    register: dashboard
+
+          #  - name: install helm
+          #    shell: snap install helm --classic
+          #    register: helm
+
+          #  - name: add helm repo 
+          #   shell: helm repo add stable https://kubernetes-charts.storage.googleapis.com/
+          #    register: helm_repo 
+          #  - debug: var=helm_repo
+          #  - name: copy jenkins directory to master node
+          #   copy: 
+          #   src: /etc/ansible/jenkins
+          #    dest: /root/helm-chart
+ 
+          #  - name: install jenkins using helm command 
+          #    command: "/snap/bin/helm install jenkin ."
+          #    args: 
+          #      chdir: /root/helm-chart/jenkins
+          #    register: jenkins
+          #  - debug: var=jenkins
+
+  - name: copy awx dir to master node
+    copy: 
+      src: /etc/ansible/awx
+      dest: /root/helm-chart
+
+  - name: install awx
+    command: "/snap/bin/helm install awx ."
+    args: 
+      chdir: /root/helm-chart/awx
+    register: awx
+  - debug: var=awx
